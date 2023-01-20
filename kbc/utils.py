@@ -249,7 +249,7 @@ def get_keys_and_targets(parts, targets, graph_type):
     return target_ids, keys
 
 
-def preload_env(kbc_path, dataset, graph_type, mode="hard", kg_path=None,
+def preload_env(kbc_path, dataset, graph_type, cuda, mode="hard", kg_path=None,
                 explain=False):
 
     from kbc.learn import kbc_model_load
@@ -257,532 +257,506 @@ def preload_env(kbc_path, dataset, graph_type, mode="hard", kg_path=None,
     env = DynKBCSingleton.getInstance()
 
     chain_instructions = []
-    try:
+    if env.kbc is not None:
+        kbc = env.kbc
+    else:
+        kbc, epoch, loss = kbc_model_load(kbc_path, cuda)
+
+    for parameter in kbc.model.parameters():
+        parameter.requires_grad = False
+
+    keys = []
+    target_ids = {}
+    if QuerDAG.TYPE1_1.value == graph_type:
+
+        raw = dataset.type1_1chain
+
+        type1_1chain = []
+        for i in range(len(raw)):
+            type1_1chain.append(raw[i].data)
+
+        part1 = [x['raw_chain'] for x in type1_1chain]
+
+        flattened_part1 = []
+
+        # [[A,b,C][C,d,[Es]]
+
+        targets = []
+        for chain_iter in range(len(part1)):
+            flattened_part1.append([part1[chain_iter][0], part1[chain_iter][1], -(chain_iter + 1234)])
+            targets.append(part1[chain_iter][2])
+
+        part1 = flattened_part1
+
+        target_ids, keys = get_keys_and_targets([part1], targets, graph_type)
+
+        device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
+
+        part1 = np.array(part1)
+        part1 = torch.tensor(part1.astype('int64'), device=device)
+
+        chain1 = kbc.model.get_full_embeddigns(part1)
+
+        lhs_norm = 0.0
+        for lhs_emb in chain1[0]:
+            lhs_norm += torch.norm(lhs_emb)
+
+        lhs_norm /= len(chain1[0])
+
+        chains = [chain1]
+        parts = [part1]
+
+    elif QuerDAG.TYPE1_2.value == graph_type:
+
+        raw = dataset.type1_2chain
+
+        type1_2chain = []
+        for i in range(len(raw)):
+            type1_2chain.append(raw[i].data)
+
+        part1 = [x['raw_chain'][0] for x in type1_2chain]
+        part2 = [x['raw_chain'][1] for x in type1_2chain]
+
+        flattened_part1 = []
+        flattened_part2 = []
+
+        # [[A,b,C][C,d,[Es]]
+
+        targets = []
+        for chain_iter in range(len(part2)):
+            flattened_part2.append([part2[chain_iter][0], part2[chain_iter][1], -(chain_iter + 1234)])
+            flattened_part1.append(part1[chain_iter])
+            targets.append(part2[chain_iter][2])
+
+        part1 = flattened_part1
+        part2 = flattened_part2
+        targets = targets
+
+        target_ids, keys = get_keys_and_targets([part1, part2], targets, graph_type)
+
+        if not chain_instructions:
+            chain_instructions = create_instructions([part1[0], part2[0]])
+
+        device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
+
+        part1 = np.array(part1)
+        part1 = torch.tensor(part1.astype('int64'), device=device)
+
+        part2 = np.array(part2)
+        part2 = torch.tensor(part2.astype('int64'), device=device)
+
+        chain1 = kbc.model.get_full_embeddigns(part1)
+        chain2 = kbc.model.get_full_embeddigns(part2)
+
+        lhs_norm = 0.0
+        for lhs_emb in chain1[0]:
+            lhs_norm += torch.norm(lhs_emb)
+
+        lhs_norm /= len(chain1[0])
+
+        chains = [chain1, chain2]
+        parts = [part1, part2]
+
+    elif QuerDAG.TYPE2_2.value == graph_type:
+        raw = dataset.type2_2chain
+
+        type2_2chain = []
+        for i in range(len(raw)):
+            type2_2chain.append(raw[i].data)
+
+        part1 = [x['raw_chain'][0] for x in type2_2chain]
+        part2 = [x['raw_chain'][1] for x in type2_2chain]
+
+        flattened_part1 = []
+        flattened_part2 = []
+
+        targets = []
+        for chain_iter in range(len(part2)):
+            flattened_part2.append([part2[chain_iter][0], part2[chain_iter][1], -(chain_iter + 1234)])
+            flattened_part1.append([part1[chain_iter][0], part1[chain_iter][1], -(chain_iter + 1234)])
+            targets.append(part2[chain_iter][2])
+
+        part1 = flattened_part1
+        part2 = flattened_part2
+        targets = targets
+
+        target_ids, keys = get_keys_and_targets([part1, part2], targets, graph_type)
+
+        if not chain_instructions:
+            chain_instructions = create_instructions([part1[0], part2[0]])
+
+        device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
+
+        part1 = np.array(part1)
+
+        part1 = torch.tensor(part1.astype('int64'), device=device)
+
+        part2 = np.array(part2)
+        part2 = torch.tensor(part2.astype('int64'), device=device)
+
+        chain1 = kbc.model.get_full_embeddigns(part1)
+        chain2 = kbc.model.get_full_embeddigns(part2)
+
+        lhs_norm = 0.0
+        for lhs_emb in chain1[0]:
+            lhs_norm += torch.norm(lhs_emb)
+
+        lhs_norm /= len(chain1[0])
+        chains = [chain1, chain2]
+        parts = [part1, part2]
+
+    elif QuerDAG.TYPE2_2_disj.value == graph_type:
+        raw = dataset.type2_2_disj_chain
+
+        type2_2chain = []
+        for i in range(len(raw)):
+            type2_2chain.append(raw[i].data)
+
+        part1 = [x['raw_chain'][0] for x in type2_2chain]
+        part2 = [x['raw_chain'][1] for x in type2_2chain]
+
+        flattened_part1 = []
+        flattened_part2 = []
+
+        targets = []
+        for chain_iter in range(len(part2)):
+            flattened_part2.append([part2[chain_iter][0], part2[chain_iter][1], -(chain_iter + 1234)])
+            flattened_part1.append([part1[chain_iter][0], part1[chain_iter][1], -(chain_iter + 1234)])
+            targets.append(part2[chain_iter][2])
+
+        part1 = flattened_part1
+        part2 = flattened_part2
+        targets = targets
+
+        target_ids, keys = get_keys_and_targets([part1, part2], targets, graph_type)
+
+        if not chain_instructions:
+            chain_instructions = create_instructions([part1[0], part2[0]])
+
+        device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
+
+        part1 = np.array(part1)
+        part1 = torch.tensor(part1.astype('int64'), device=device)
+
+        part2 = np.array(part2)
+        part2 = torch.tensor(part2.astype('int64'), device=device)
+
+        chain1 = kbc.model.get_full_embeddigns(part1)
+        chain2 = kbc.model.get_full_embeddigns(part2)
+
+        lhs_norm = 0.0
+        for lhs_emb in chain1[0]:
+            lhs_norm += torch.norm(lhs_emb)
+
+        lhs_norm /= len(chain1[0])
+        chains = [chain1, chain2]
+        parts = [part1, part2]
+
+    elif QuerDAG.TYPE1_3.value == graph_type:
+        raw = dataset.type1_3chain
+
+        type1_3chain = []
+        for i in range(len(raw)):
+            type1_3chain.append(raw[i].data)
+
+        part1 = [x['raw_chain'][0] for x in type1_3chain]
+        part2 = [x['raw_chain'][1] for x in type1_3chain]
+        part3 = [x['raw_chain'][2] for x in type1_3chain]
+
+        flattened_part1 = []
+        flattened_part2 = []
+        flattened_part3 = []
+
+        # [A,b,C][C,d,[Es]]
+        targets = []
+        for chain_iter in range(len(part3)):
+            flattened_part3.append([part3[chain_iter][0], part3[chain_iter][1], -(chain_iter + 1234)])
+            flattened_part2.append([part2[chain_iter][0], part2[chain_iter][1], part2[chain_iter][2]])
+            flattened_part1.append([part1[chain_iter][0], part1[chain_iter][1], part1[chain_iter][2]])
+            targets.append(part3[chain_iter][2])
+
+        part1 = flattened_part1
+        part2 = flattened_part2
+        part3 = flattened_part3
+        targets = targets
+
+        target_ids, keys = get_keys_and_targets([part1, part2, part3], targets, graph_type)
+
+        if not chain_instructions:
+            chain_instructions = create_instructions([part1[0], part2[0], part3[0]])
+
+        device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
+
+        part1 = np.array(part1)
+        part1 = torch.tensor(part1.astype('int64'), device=device)
+
+        part2 = np.array(part2)
+        part2 = torch.tensor(part2.astype('int64'), device=device)
+
+        part3 = np.array(part3)
+        part3 = torch.tensor(part3.astype('int64'), device=device)
+
+        chain1 = kbc.model.get_full_embeddigns(part1)
+        chain2 = kbc.model.get_full_embeddigns(part2)
+        chain3 = kbc.model.get_full_embeddigns(part3)
+
+        lhs_norm = 0.0
+        for lhs_emb in chain1[0]:
+            lhs_norm += torch.norm(lhs_emb)
+
+        lhs_norm /= len(chain1[0])
+
+        chains = [chain1, chain2, chain3]
+        parts = [part1, part2, part3]
+
+    elif QuerDAG.TYPE2_3.value == graph_type:
+        raw = dataset.type2_3chain
+
+        type2_3chain = []
+        for i in range(len(raw)):
+            type2_3chain.append(raw[i].data)
+
+        part1 = [x['raw_chain'][0] for x in type2_3chain]
+        part2 = [x['raw_chain'][1] for x in type2_3chain]
+        part3 = [x['raw_chain'][2] for x in type2_3chain]
+
+        flattened_part1 = []
+        flattened_part2 = []
+        flattened_part3 = []
+
+        targets = []
+        for chain_iter in range(len(part3)):
+            flattened_part3.append([part3[chain_iter][0], part3[chain_iter][1], -(chain_iter + 1234)])
+            flattened_part2.append([part2[chain_iter][0], part2[chain_iter][1], -(chain_iter + 1234)])
+            flattened_part1.append([part1[chain_iter][0], part1[chain_iter][1], -(chain_iter + 1234)])
+            targets.append(part3[chain_iter][2])
+
+        part1 = flattened_part1
+        part2 = flattened_part2
+        part3 = flattened_part3
+        targets = targets
+
+        target_ids, keys = get_keys_and_targets([part1, part2, part3], targets, graph_type)
+
+        if not chain_instructions:
+            chain_instructions = create_instructions([part1[0], part2[0], part3[0]])
+
+        device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
+
+        part1 = np.array(part1)
+        part1 = torch.tensor(part1.astype('int64'), device=device)
+
+        part2 = np.array(part2)
+        part2 = torch.tensor(part2.astype('int64'), device=device)
+
+        part3 = np.array(part3)
+        part3 = torch.tensor(part3.astype('int64'), device=device)
+
+        chain1 = kbc.model.get_full_embeddigns(part1)
+        chain2 = kbc.model.get_full_embeddigns(part2)
+        chain3 = kbc.model.get_full_embeddigns(part3)
+
+        lhs_norm = 0.0
+        for lhs_emb in chain1[0]:
+            lhs_norm += torch.norm(lhs_emb)
+
+        lhs_norm /= len(chain1[0])
+
+        chains = [chain1, chain2, chain3]
+        parts = [part1, part2, part3]
+
+    elif QuerDAG.TYPE3_3.value == graph_type:
+
+        raw = dataset.type3_3chain
+
+        type3_3chain = []
+        for i in range(len(raw)):
+            type3_3chain.append(raw[i].data)
+
+        part1 = [x['raw_chain'][0] for x in type3_3chain]
+        part2 = [x['raw_chain'][1] for x in type3_3chain]
+        part3 = [x['raw_chain'][2] for x in type3_3chain]
+
+        flattened_part1 = []
+        flattened_part2 = []
+        flattened_part3 = []
+
+        targets = []
+        for chain_iter in range(len(part3)):
+            flattened_part3.append([part3[chain_iter][0], part3[chain_iter][1], -(chain_iter + 1234)])
+            flattened_part2.append([part2[chain_iter][0], part2[chain_iter][1], -(chain_iter + 1234)])
+            flattened_part1.append([part1[chain_iter][0], part1[chain_iter][1], part1[chain_iter][2]])
+            targets.append(part3[chain_iter][2])
+
+        part1 = flattened_part1
+        part2 = flattened_part2
+        part3 = flattened_part3
+        targets = targets
+
+        target_ids, keys = get_keys_and_targets([part1, part2, part3], targets, graph_type)
+
+        if not chain_instructions:
+            chain_instructions = create_instructions([part1[0], part2[0], part3[0]])
+
+        device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
+
+        part1 = np.array(part1)
+        part1 = torch.tensor(part1.astype('int64'), device=device)
+
+        part2 = np.array(part2)
+        part2 = torch.tensor(part2.astype('int64'), device=device)
+
+        part3 = np.array(part3)
+        part3 = torch.tensor(part3.astype('int64'), device=device)
+
+        chain1 = kbc.model.get_full_embeddigns(part1)
+        chain2 = kbc.model.get_full_embeddigns(part2)
+        chain3 = kbc.model.get_full_embeddigns(part3)
+
+        lhs_norm = 0.0
+        for lhs_emb in chain1[0]:
+            lhs_norm += torch.norm(lhs_emb)
+
+        lhs_norm /= len(chain1[0])
+
+        chains = [chain1, chain2, chain3]
+        parts = [part1, part2, part3]
+
+    elif QuerDAG.TYPE4_3.value == graph_type:
+        raw = dataset.type4_3chain
+
+        type4_3chain = []
+        for i in range(len(raw)):
+            type4_3chain.append(raw[i].data)
+
+        part1 = [x['raw_chain'][0] for x in type4_3chain]
+        part2 = [x['raw_chain'][1] for x in type4_3chain]
+        part3 = [x['raw_chain'][2] for x in type4_3chain]
+
+        flattened_part1 = []
+        flattened_part2 = []
+        flattened_part3 = []
+
+        # [A,r_1,B][C,r_2,B][B, r_3, [D's]]
+        targets = []
+        for chain_iter in range(len(part3)):
+            flattened_part3.append([part3[chain_iter][0], part3[chain_iter][1], -(chain_iter + 1234)])
+            flattened_part2.append([part2[chain_iter][0], part2[chain_iter][1], part2[chain_iter][2]])
+            flattened_part1.append([part1[chain_iter][0], part1[chain_iter][1], part1[chain_iter][2]])
+            targets.append(part3[chain_iter][2])
+
+        part1 = flattened_part1
+        part2 = flattened_part2
+        part3 = flattened_part3
+        targets = targets
+
+        target_ids, keys = get_keys_and_targets([part1, part2, part3], targets, graph_type)
+
+        if not chain_instructions:
+            chain_instructions = create_instructions([part1[0], part2[0], part3[0]])
+
+        part1 = np.array(part1)
+        part1 = torch.from_numpy(part1.astype('int64')).cuda()
+
+        part2 = np.array(part2)
+        part2 = torch.from_numpy(part2.astype('int64')).cuda()
+
+        part3 = np.array(part3)
+        part3 = torch.from_numpy(part3.astype('int64')).cuda()
+
+        chain1 = kbc.model.get_full_embeddigns(part1)
+        chain2 = kbc.model.get_full_embeddigns(part2)
+        chain3 = kbc.model.get_full_embeddigns(part3)
+
+        lhs_norm = 0.0
+        for lhs_emb in chain1[0]:
+            lhs_norm += torch.norm(lhs_emb)
+
+        lhs_norm /= len(chain1[0])
+        chains = [chain1, chain2, chain3]
+        parts = [part1, part2, part3]
+
+    elif QuerDAG.TYPE4_3_disj.value == graph_type:
+        raw = dataset.type4_3_disj_chain
+
+        type4_3chain = []
+        for i in range(len(raw)):
+            type4_3chain.append(raw[i].data)
+
+        part1 = [x['raw_chain'][0] for x in type4_3chain]
+        part2 = [x['raw_chain'][1] for x in type4_3chain]
+        part3 = [x['raw_chain'][2] for x in type4_3chain]
+
+        flattened_part1 = []
+        flattened_part2 = []
+        flattened_part3 = []
+
+        # [A,r_1,B][C,r_2,B][B, r_3, [D's]]
+        targets = []
+        for chain_iter in range(len(part3)):
+            flattened_part3.append([part3[chain_iter][0], part3[chain_iter][1], -(chain_iter + 1234)])
+            flattened_part2.append([part2[chain_iter][0], part2[chain_iter][1], part2[chain_iter][2]])
+            flattened_part1.append([part1[chain_iter][0], part1[chain_iter][1], part1[chain_iter][2]])
+            targets.append(part3[chain_iter][2])
+
+        part1 = flattened_part1
+        part2 = flattened_part2
+        part3 = flattened_part3
+        targets = targets
+
+        target_ids, keys = get_keys_and_targets([part1, part2, part3], targets, graph_type)
+
+        if not chain_instructions:
+            chain_instructions = create_instructions([part1[0], part2[0], part3[0]])
+
+        device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
+
+        part1 = np.array(part1)
+        part1 = torch.tensor(part1.astype('int64'), device=device)
+
+        part2 = np.array(part2)
+        part2 = torch.tensor(part2.astype('int64'), device=device)
+
+        part3 = np.array(part3)
+        part3 = torch.tensor(part3.astype('int64'), device=device)
+
+        chain1 = kbc.model.get_full_embeddigns(part1)
+        chain2 = kbc.model.get_full_embeddigns(part2)
+        chain3 = kbc.model.get_full_embeddigns(part3)
+
+        lhs_norm = 0.0
+        for lhs_emb in chain1[0]:
+            lhs_norm += torch.norm(lhs_emb)
+
+        lhs_norm /= len(chain1[0])
+        chains = [chain1, chain2, chain3]
+        parts = [part1, part2, part3]
 
 
-        if env.kbc is not None:
-            kbc = env.kbc
+    else:
+        chains = dataset['chains']
+        parts = dataset['parts']
+        target_ids = dataset['target_ids']
+        chain_instructions = create_instructions([parts[0][0], parts[1][0], parts[2][0]])
+
+    if mode == 'hard':
+        if kg_path is not None and explain:
+            ent_id2fb = pickle.load(open(osp.join(kg_path, 'ind2ent.pkl'), 'rb'))
+            rel_id2fb = pickle.load(open(osp.join(kg_path, 'ind2rel.pkl'), 'rb'))
+            fb2name = defaultdict(lambda: '[missing]')
+            with open(osp.join(kg_path, 'entity2text.txt')) as f:
+                for line in f:
+                    fb_id, name = line.strip().split('\t')
+                    fb2name[fb_id] = name
         else:
-            kbc, epoch, loss = kbc_model_load(kbc_path)
-
-        for parameter in kbc.model.parameters():
-            parameter.requires_grad = False
-
-        keys = []
-        target_ids = {}
-        if QuerDAG.TYPE1_1.value == graph_type:
-
-            raw = dataset.type1_1chain
-
-            type1_1chain = []
-            for i in range(len(raw)):
-                type1_1chain.append(raw[i].data)
-
-            part1 = [x['raw_chain'] for x in type1_1chain]
-
-            flattened_part1 = []
-
-            # [[A,b,C][C,d,[Es]]
-
-            targets = []
-            for chain_iter in range(len(part1)):
-                flattened_part1.append([part1[chain_iter][0], part1[chain_iter][1],-(chain_iter+1234)])
-                targets.append(part1[chain_iter][2])
-
-            part1 = flattened_part1
-
-            target_ids, keys = get_keys_and_targets([part1], targets, graph_type)
-
-            device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
-
-            part1 = np.array(part1)
-            part1 = torch.tensor(part1.astype('int64'), device=device)
-
-            chain1 = kbc.model.get_full_embeddigns(part1)
-
-            lhs_norm = 0.0
-            for lhs_emb in chain1[0]:
-                lhs_norm+=torch.norm(lhs_emb)
-
-            lhs_norm/= len(chain1[0])
-
-            chains = [chain1]
-            parts = [part1]
-
-        elif QuerDAG.TYPE1_2.value == graph_type:
-
-            raw = dataset.type1_2chain
-
-            type1_2chain = []
-            for i in range(len(raw)):
-                type1_2chain.append(raw[i].data)
-
-            part1 = [x['raw_chain'][0] for x in type1_2chain]
-            part2 = [x['raw_chain'][1] for x in type1_2chain]
-
-            flattened_part1 =[]
-            flattened_part2 = []
-
-            # [[A,b,C][C,d,[Es]]
-
-            targets = []
-            for chain_iter in range(len(part2)):
-                flattened_part2.append([part2[chain_iter][0],part2[chain_iter][1],-(chain_iter+1234)])
-                flattened_part1.append(part1[chain_iter])
-                targets.append(part2[chain_iter][2])
-
-            part1 = flattened_part1
-            part2 = flattened_part2
-            targets = targets
-
-            target_ids, keys = get_keys_and_targets([part1, part2], targets, graph_type)
-
-            if not chain_instructions:
-                chain_instructions = create_instructions([part1[0], part2[0]])
-
-            device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
-
-            part1 = np.array(part1)
-            part1 = torch.tensor(part1.astype('int64'), device=device)
-
-            part2 = np.array(part2)
-            part2 = torch.tensor(part2.astype('int64'), device=device)
-
-            chain1 = kbc.model.get_full_embeddigns(part1)
-            chain2 = kbc.model.get_full_embeddigns(part2)
-
-            lhs_norm = 0.0
-            for lhs_emb in chain1[0]:
-                lhs_norm+=torch.norm(lhs_emb)
-
-            lhs_norm/= len(chain1[0])
-
-            chains = [chain1,chain2]
-            parts = [part1, part2]
-
-        elif QuerDAG.TYPE2_2.value == graph_type:
-            raw = dataset.type2_2chain
-
-            type2_2chain = []
-            for i in range(len(raw)):
-                type2_2chain.append(raw[i].data)
-
-
-            part1 = [x['raw_chain'][0] for x in type2_2chain]
-            part2 = [x['raw_chain'][1] for x in type2_2chain]
-
-
-            flattened_part1 =[]
-            flattened_part2 = []
-
-            targets = []
-            for chain_iter in range(len(part2)):
-                flattened_part2.append([part2[chain_iter][0],part2[chain_iter][1],-(chain_iter+1234)])
-                flattened_part1.append([part1[chain_iter][0],part1[chain_iter][1],-(chain_iter+1234)])
-                targets.append(part2[chain_iter][2])
-
-            part1 = flattened_part1
-            part2 = flattened_part2
-            targets = targets
-
-            target_ids, keys = get_keys_and_targets([part1, part2], targets, graph_type)
-
-            if not chain_instructions:
-                chain_instructions = create_instructions([part1[0], part2[0]])
-
-            device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
-
-            part1 = np.array(part1)
-
-            part1 = torch.tensor(part1.astype('int64'), device=device)
-
-            part2 = np.array(part2)
-            part2 = torch.tensor(part2.astype('int64'), device=device)
-
-            chain1 = kbc.model.get_full_embeddigns(part1)
-            chain2 = kbc.model.get_full_embeddigns(part2)
-
-            lhs_norm = 0.0
-            for lhs_emb in chain1[0]:
-                lhs_norm+=torch.norm(lhs_emb)
-
-            lhs_norm/= len(chain1[0])
-            chains = [chain1,chain2]
-            parts = [part1,part2]
-
-        elif QuerDAG.TYPE2_2_disj.value == graph_type:
-            raw = dataset.type2_2_disj_chain
-
-            type2_2chain = []
-            for i in range(len(raw)):
-                type2_2chain.append(raw[i].data)
-
-            part1 = [x['raw_chain'][0] for x in type2_2chain]
-            part2 = [x['raw_chain'][1] for x in type2_2chain]
-
-            flattened_part1 =[]
-            flattened_part2 = []
-
-            targets = []
-            for chain_iter in range(len(part2)):
-                flattened_part2.append([part2[chain_iter][0],part2[chain_iter][1],-(chain_iter+1234)])
-                flattened_part1.append([part1[chain_iter][0],part1[chain_iter][1],-(chain_iter+1234)])
-                targets.append(part2[chain_iter][2])
-
-
-            part1 = flattened_part1
-            part2 = flattened_part2
-            targets = targets
-
-            target_ids, keys = get_keys_and_targets([part1, part2], targets, graph_type)
-
-
-            if not chain_instructions:
-                chain_instructions = create_instructions([part1[0], part2[0]])
-
-            device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
-
-            part1 = np.array(part1)
-            part1 = torch.tensor(part1.astype('int64'), device=device)
-
-            part2 = np.array(part2)
-            part2 = torch.tensor(part2.astype('int64'), device=device)
-
-            chain1 = kbc.model.get_full_embeddigns(part1)
-            chain2 = kbc.model.get_full_embeddigns(part2)
-
-            lhs_norm = 0.0
-            for lhs_emb in chain1[0]:
-                lhs_norm+=torch.norm(lhs_emb)
-
-            lhs_norm/= len(chain1[0])
-            chains = [chain1,chain2]
-            parts = [part1,part2]
-
-        elif QuerDAG.TYPE1_3.value == graph_type:
-            raw = dataset.type1_3chain
-
-            type1_3chain = []
-            for i in range(len(raw)):
-                type1_3chain.append(raw[i].data)
-
-
-            part1 = [x['raw_chain'][0] for x in type1_3chain]
-            part2 = [x['raw_chain'][1] for x in type1_3chain]
-            part3 = [x['raw_chain'][2] for x in type1_3chain]
-
-
-            flattened_part1 =[]
-            flattened_part2 = []
-            flattened_part3 = []
-
-            # [A,b,C][C,d,[Es]]
-            targets = []
-            for chain_iter in range(len(part3)):
-                flattened_part3.append([part3[chain_iter][0],part3[chain_iter][1],-(chain_iter+1234)])
-                flattened_part2.append([part2[chain_iter][0],part2[chain_iter][1],part2[chain_iter][2]])
-                flattened_part1.append([part1[chain_iter][0],part1[chain_iter][1],part1[chain_iter][2]])
-                targets.append(part3[chain_iter][2])
-
-            part1 = flattened_part1
-            part2 = flattened_part2
-            part3 = flattened_part3
-            targets = targets
-
-            target_ids, keys = get_keys_and_targets([part1, part2, part3], targets, graph_type)
-
-            if not chain_instructions:
-                chain_instructions = create_instructions([part1[0], part2[0], part3[0]])
-
-            device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
-
-            part1 = np.array(part1)
-            part1 = torch.tensor(part1.astype('int64'), device=device)
-
-            part2 = np.array(part2)
-            part2 = torch.tensor(part2.astype('int64'), device=device)
-
-            part3 = np.array(part3)
-            part3 = torch.tensor(part3.astype('int64'), device=device)
-
-            chain1 = kbc.model.get_full_embeddigns(part1)
-            chain2 = kbc.model.get_full_embeddigns(part2)
-            chain3 = kbc.model.get_full_embeddigns(part3)
-
-
-            lhs_norm = 0.0
-            for lhs_emb in chain1[0]:
-                lhs_norm+=torch.norm(lhs_emb)
-
-            lhs_norm/= len(chain1[0])
-
-            chains = [chain1,chain2,chain3]
-            parts = [part1, part2, part3]
-
-        elif QuerDAG.TYPE2_3.value == graph_type:
-            raw = dataset.type2_3chain
-
-            type2_3chain = []
-            for i in range(len(raw)):
-                type2_3chain.append(raw[i].data)
-
-            part1 = [x['raw_chain'][0] for x in type2_3chain]
-            part2 = [x['raw_chain'][1] for x in type2_3chain]
-            part3 = [x['raw_chain'][2] for x in type2_3chain]
-
-            flattened_part1 =[]
-            flattened_part2 = []
-            flattened_part3 = []
-
-            targets = []
-            for chain_iter in range(len(part3)):
-                flattened_part3.append([part3[chain_iter][0],part3[chain_iter][1],-(chain_iter+1234)])
-                flattened_part2.append([part2[chain_iter][0],part2[chain_iter][1],-(chain_iter+1234)])
-                flattened_part1.append([part1[chain_iter][0],part1[chain_iter][1],-(chain_iter+1234)])
-                targets.append(part3[chain_iter][2])
-
-            part1 = flattened_part1
-            part2 = flattened_part2
-            part3 = flattened_part3
-            targets = targets
-
-            target_ids, keys = get_keys_and_targets([part1, part2, part3], targets, graph_type)
-
-            if not chain_instructions:
-                chain_instructions = create_instructions([part1[0], part2[0], part3[0]])
-
-            device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
-
-            part1 = np.array(part1)
-            part1 = torch.tensor(part1.astype('int64'), device=device)
-
-            part2 = np.array(part2)
-            part2 = torch.tensor(part2.astype('int64'), device=device)
-
-            part3 = np.array(part3)
-            part3 = torch.tensor(part3.astype('int64'), device=device)
-
-            chain1 = kbc.model.get_full_embeddigns(part1)
-            chain2 = kbc.model.get_full_embeddigns(part2)
-            chain3 = kbc.model.get_full_embeddigns(part3)
-
-
-            lhs_norm = 0.0
-            for lhs_emb in chain1[0]:
-                lhs_norm+=torch.norm(lhs_emb)
-
-            lhs_norm/= len(chain1[0])
-
-            chains = [chain1,chain2,chain3]
-            parts = [part1,part2,part3]
-
-        elif QuerDAG.TYPE3_3.value == graph_type:
-
-            raw = dataset.type3_3chain
-
-            type3_3chain = []
-            for i in range(len(raw)):
-                type3_3chain.append(raw[i].data)
-
-
-            part1 = [x['raw_chain'][0] for x in type3_3chain]
-            part2 = [x['raw_chain'][1] for x in type3_3chain]
-            part3 = [x['raw_chain'][2] for x in type3_3chain]
-
-
-            flattened_part1 =[]
-            flattened_part2 = []
-            flattened_part3 = []
-
-            targets = []
-            for chain_iter in range(len(part3)):
-                flattened_part3.append([part3[chain_iter][0],part3[chain_iter][1],-(chain_iter+1234)])
-                flattened_part2.append([part2[chain_iter][0],part2[chain_iter][1],-(chain_iter+1234)])
-                flattened_part1.append([part1[chain_iter][0],part1[chain_iter][1],part1[chain_iter][2]])
-                targets.append(part3[chain_iter][2])
-
-
-            part1 = flattened_part1
-            part2 = flattened_part2
-            part3 = flattened_part3
-            targets = targets
-
-            target_ids, keys = get_keys_and_targets([part1, part2, part3], targets, graph_type)
-
-
-            if not chain_instructions:
-                chain_instructions = create_instructions([part1[0], part2[0], part3[0]])
-
-            device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
-
-            part1 = np.array(part1)
-            part1 = torch.tensor(part1.astype('int64'), device=device)
-
-            part2 = np.array(part2)
-            part2 = torch.tensor(part2.astype('int64'), device=device)
-
-            part3 = np.array(part3)
-            part3 = torch.tensor(part3.astype('int64'), device=device)
-
-            chain1 = kbc.model.get_full_embeddigns(part1)
-            chain2 = kbc.model.get_full_embeddigns(part2)
-            chain3 = kbc.model.get_full_embeddigns(part3)
-
-
-            lhs_norm = 0.0
-            for lhs_emb in chain1[0]:
-                lhs_norm+=torch.norm(lhs_emb)
-
-            lhs_norm/= len(chain1[0])
-
-            chains = [chain1,chain2,chain3]
-            parts = [part1, part2, part3]
-
-        elif QuerDAG.TYPE4_3.value == graph_type:
-            raw = dataset.type4_3chain
-
-            type4_3chain = []
-            for i in range(len(raw)):
-                type4_3chain.append(raw[i].data)
-
-
-            part1 = [x['raw_chain'][0] for x in type4_3chain]
-            part2 = [x['raw_chain'][1] for x in type4_3chain]
-            part3 = [x['raw_chain'][2] for x in type4_3chain]
-
-
-            flattened_part1 =[]
-            flattened_part2 = []
-            flattened_part3 = []
-
-            # [A,r_1,B][C,r_2,B][B, r_3, [D's]]
-            targets = []
-            for chain_iter in range(len(part3)):
-                flattened_part3.append([part3[chain_iter][0],part3[chain_iter][1],-(chain_iter+1234)])
-                flattened_part2.append([part2[chain_iter][0],part2[chain_iter][1],part2[chain_iter][2]])
-                flattened_part1.append([part1[chain_iter][0],part1[chain_iter][1],part1[chain_iter][2]])
-                targets.append(part3[chain_iter][2])
-
-            part1 = flattened_part1
-            part2 = flattened_part2
-            part3 = flattened_part3
-            targets = targets
-
-            target_ids, keys = get_keys_and_targets([part1, part2, part3], targets, graph_type)
-
-            if not chain_instructions:
-                chain_instructions = create_instructions([part1[0], part2[0], part3[0]])
-
-            part1 = np.array(part1)
-            part1 = torch.from_numpy(part1.astype('int64')).cuda()
-
-            part2 = np.array(part2)
-            part2 = torch.from_numpy(part2.astype('int64')).cuda()
-
-            part3 = np.array(part3)
-            part3 = torch.from_numpy(part3.astype('int64')).cuda()
-
-            chain1 = kbc.model.get_full_embeddigns(part1)
-            chain2 = kbc.model.get_full_embeddigns(part2)
-            chain3 = kbc.model.get_full_embeddigns(part3)
-
-
-            lhs_norm = 0.0
-            for lhs_emb in chain1[0]:
-                lhs_norm+=torch.norm(lhs_emb)
-
-            lhs_norm/= len(chain1[0])
-            chains = [chain1,chain2,chain3]
-            parts = [part1,part2,part3]
-
-        elif QuerDAG.TYPE4_3_disj.value == graph_type:
-            raw = dataset.type4_3_disj_chain
-
-            type4_3chain = []
-            for i in range(len(raw)):
-                type4_3chain.append(raw[i].data)
-
-
-            part1 = [x['raw_chain'][0] for x in type4_3chain]
-            part2 = [x['raw_chain'][1] for x in type4_3chain]
-            part3 = [x['raw_chain'][2] for x in type4_3chain]
-
-
-            flattened_part1 =[]
-            flattened_part2 = []
-            flattened_part3 = []
-
-            # [A,r_1,B][C,r_2,B][B, r_3, [D's]]
-            targets = []
-            for chain_iter in range(len(part3)):
-                flattened_part3.append([part3[chain_iter][0],part3[chain_iter][1],-(chain_iter+1234)])
-                flattened_part2.append([part2[chain_iter][0],part2[chain_iter][1],part2[chain_iter][2]])
-                flattened_part1.append([part1[chain_iter][0],part1[chain_iter][1],part1[chain_iter][2]])
-                targets.append(part3[chain_iter][2])
-
-            part1 = flattened_part1
-            part2 = flattened_part2
-            part3 = flattened_part3
-            targets = targets
-
-            target_ids, keys = get_keys_and_targets([part1, part2, part3], targets, graph_type)
-
-            if not chain_instructions:
-                chain_instructions = create_instructions([part1[0], part2[0], part3[0]])
-
-            device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
-
-            part1 = np.array(part1)
-            part1 = torch.tensor(part1.astype('int64'), device=device)
-
-            part2 = np.array(part2)
-            part2 = torch.tensor(part2.astype('int64'), device=device)
-
-            part3 = np.array(part3)
-            part3 = torch.tensor(part3.astype('int64'), device=device)
-
-            chain1 = kbc.model.get_full_embeddigns(part1)
-            chain2 = kbc.model.get_full_embeddigns(part2)
-            chain3 = kbc.model.get_full_embeddigns(part3)
-
-
-            lhs_norm = 0.0
-            for lhs_emb in chain1[0]:
-                lhs_norm+=torch.norm(lhs_emb)
-
-            lhs_norm/= len(chain1[0])
-            chains = [chain1,chain2,chain3]
-            parts = [part1,part2,part3]
-
-
-        else:
-            chains = dataset['chains']
-            parts = dataset['parts']
-            target_ids = dataset['target_ids']
-            chain_instructions = create_instructions([parts[0][0], parts[1][0], parts[2][0]])
-
-        if mode == 'hard':
-            if kg_path is not None and explain:
-                ent_id2fb = pickle.load(open(osp.join(kg_path, 'ind2ent.pkl'), 'rb'))
-                rel_id2fb = pickle.load(open(osp.join(kg_path, 'ind2rel.pkl'), 'rb'))
-                fb2name = defaultdict(lambda: '[missing]')
-                with open(osp.join(kg_path, 'entity2text.txt')) as f:
-                    for line in f:
-                        fb_id, name = line.strip().split('\t')
-                        fb2name[fb_id] = name
-            else:
-                ent_id2fb, rel_id2fb, fb2name = None, None, None
-
-
-            env.set_attr(kbc, chains, parts, target_ids, keys, None, None, chain_instructions, graph_type, lhs_norm, False, ent_id2fb, rel_id2fb, fb2name)
-
-            # env.set_attr(kbc,chains,parts,target_ids, keys, chain_instructions , graph_type, lhs_norm)
-            # def set_attr(kbc, chains, parts, target_ids_hard, keys_hard, target_ids_complete, keys_complete, chain_instructions, graph_type, lhs_norm, cuda ):
-        else:
-            env.set_eval_complete(target_ids,keys)
-
-    except RuntimeError as e:
-        print("Cannot preload environment with error: ", e)
-        return env
+            ent_id2fb, rel_id2fb, fb2name = None, None, None
+
+        env.set_attr(kbc, chains, parts, target_ids, keys, None, None, chain_instructions, graph_type, lhs_norm, False,
+                     ent_id2fb, rel_id2fb, fb2name)
+
+        # env.set_attr(kbc,chains,parts,target_ids, keys, chain_instructions , graph_type, lhs_norm)
+        # def set_attr(kbc, chains, parts, target_ids_hard, keys_hard, target_ids_complete, keys_complete, chain_instructions, graph_type, lhs_norm, cuda ):
+    else:
+        env.set_eval_complete(target_ids, keys)
 
     return env

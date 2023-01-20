@@ -85,7 +85,7 @@ def train_kbc(KBC_optimizer, dataset, args):
 	return curve, results
 
 
-def kbc_model_load(model_path):
+def kbc_model_load(model_path, cuda):
 	"""
 	This function loads the KBC model given the model. It uses the
 	common identifiers in the name to identify the metadata/model files
@@ -129,7 +129,7 @@ def kbc_model_load(model_path):
 	else:
 		raise ValueError(f'Model {factorizer_name} not in {models}')
 
-	device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
+	device = torch.device('cuda:{}'.format(cuda))
 	model.to(device)
 
 	regularizer = checkpoint['regularizer']
@@ -138,6 +138,24 @@ def kbc_model_load(model_path):
 
 	KBC_optimizer = KBCOptimizer(model, regularizer, optim_method, batch_size)
 	KBC_optimizer.model.load_state_dict(checkpoint['model_state_dict'])
+	print('loaded ckpt')
+	n_entity, n_relation = model.embeddings[0].weight.shape[0], model.embeddings[1].weight.shape[0]
+	split_num = 100
+	split_each_relation = int(n_relation / split_num)
+	for split in range(50, split_num):
+		all_matrix = torch.zeros((split_each_relation, n_entity, n_entity), requires_grad=False)
+		for relation_id in range(split_each_relation):
+			relation_total_id = relation_id + split * split_each_relation
+			print('r_id', relation_total_id)
+			for head_id in range(n_entity):
+				indexing = torch.zeros(n_entity, 3).to(device).int()
+				indexing[:, 2] = torch.arange(0, n_entity).int().to(device)
+				indexing[:, 0] = torch.full([n_entity], head_id).to(device)
+				indexing[:, 1] = torch.full([n_entity], relation_total_id).to(device)
+				score = model.score(indexing).data
+				all_matrix[relation_id, head_id] = score.squeeze()
+		torch.save(all_matrix, f'models/NELL/matrix_{split}.ckpt')
+		print(f"split{split} saved")
 	KBC_optimizer.optimizer.load_state_dict(checkpoint['optimizer_state_dict'])
 	epoch = checkpoint['epoch']
 	loss = checkpoint['loss']
@@ -168,7 +186,7 @@ def dataset_to_query(model, dataset_name, dataset_mode):
 		queries = model.get_queries_separated(query_ids)
 
 		if not('train' in dataset_mode.lower()):
-			results =  dataset.eval(model, dataset_mode, -1)
+			results = dataset.eval(model, dataset_mode, -1)
 			print("\n\n{} : {}".format(dataset_mode, results))
 
 

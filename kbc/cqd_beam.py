@@ -12,7 +12,7 @@ from kbc.utils import preload_env
 from kbc.metrics import evaluation
 
 
-def run(kbc_path, dataset_hard, dataset_complete, dataset_name, t_norm='min', candidates=3, scores_normalize=0, kg_path=None, explain=False):
+def run(cuda, kbc_path, dataset_hard, dataset_complete, dataset_name, t_norm='min', candidates=3, scores_normalize=0, kg_path=None, explain=False):
 	experiments = [t.value for t in QuerDAG]
 	experiments.remove(QuerDAG.TYPE1_1.value)
 
@@ -22,16 +22,16 @@ def run(kbc_path, dataset_hard, dataset_complete, dataset_name, t_norm='min', ca
 	rank = path_entries[path_entries.index('rank') + 1] if 'rank' in path_entries else 'None'
 
 	for exp in experiments:
-		metrics = answer(kbc_path, dataset_hard, dataset_complete, t_norm, exp, candidates, scores_normalize, kg_path, explain)
+		metrics = answer(cuda, kbc_path, dataset_hard, dataset_complete, t_norm, exp, candidates, scores_normalize, kg_path, explain)
 
 		with open(f'topk_d={dataset_name}_t={t_norm}_e={exp}_rank={rank}_k={candidates}_sn={scores_normalize}.json', 'w') as fp:
 			json.dump(metrics, fp)
 	return
 
 
-def answer(kbc_path, dataset_hard, dataset_complete, t_norm='min', query_type=QuerDAG.TYPE1_2, candidates=3, scores_normalize = 0, kg_path=None, explain=False):
-	env = preload_env(kbc_path, dataset_hard, query_type, mode='hard', kg_path=kg_path, explain=explain)
-	env = preload_env(kbc_path, dataset_complete, query_type, mode='complete', explain=explain)
+def answer(cuda, kbc_path, dataset_hard, dataset_complete, t_norm='min', query_type=QuerDAG.TYPE1_2, candidates=3, scores_normalize = 0, kg_path=None, explain=False):
+	env = preload_env(kbc_path, dataset_hard, query_type, cuda, mode='hard', kg_path=kg_path, explain=explain)
+	env = preload_env(kbc_path, dataset_complete, query_type, cuda, mode='complete', explain=explain)
 
 	if '1' in env.chain_instructions[-1][-1]:
 		part1, part2 = env.parts
@@ -71,16 +71,16 @@ if __name__ == "__main__":
 	description="Complex Query Decomposition - Beam"
 	)
 
-	parser.add_argument('path', help='Path to directory containing queries')
+	parser.add_argument('--path', help='Path to directory containing queries', default='data/NELL')
 
 	parser.add_argument(
 	'--model_path',
-	help="The path to the KBC model. Can be both relative and full"
+	help="The path to the KBC model. Can be both relative and full", default='models/NELL-model-rank-1000-epoch-100-1602499096.pt'
 	)
 
 	parser.add_argument(
 	'--dataset',
-	help="The pickled Dataset name containing the chains"
+	help="The pickled Dataset name containing the chains", default='FB15k'
 	)
 
 	parser.add_argument(
@@ -94,7 +94,7 @@ if __name__ == "__main__":
 	)
 
 	parser.add_argument(
-	'--t_norm', choices=t_norms, default='min',
+	'--t_norm', choices=t_norms, default='product',
 	help="T-norms available are ".format(t_norms)
 	)
 
@@ -106,7 +106,9 @@ if __name__ == "__main__":
 	parser.add_argument('--explain', default=False,
 						action='store_true',
 						help='Generate log file with explanations for 2p queries')
-
+	parser.add_argument(
+		'--cuda', default=2
+	)
 	args = parser.parse_args()
 
 	dataset = osp.basename(args.path)
@@ -119,7 +121,7 @@ if __name__ == "__main__":
 	data_complete = pickle.load(open(data_complete_path, 'rb'))
 
 	candidates = int(args.candidates)
-	run(args.model_path, data_hard, data_complete,
+	run(args.cuda, args.model_path, data_hard, data_complete,
 		dataset, t_norm=args.t_norm, candidates=candidates,
 		scores_normalize=int(args.scores_normalize),
 		kg_path=args.path, explain=args.explain)

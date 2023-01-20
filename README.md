@@ -61,7 +61,8 @@ Our pre-trained neural link prediction models are available here:
 % wget http://data.neuralnoise.com/cqd-models.tgz
 % tar xvf cqd-models.tgz
 ```
-
+237：'models/FB15k-237-model-rank-1000-epoch-100-1602508358.pt'
+15k:
 ### 3. Alternative -- Train your own models
 
 To obtain entity and relation embeddings, we use ComplEx. Use the next commands to train the embeddings for each dataset.
